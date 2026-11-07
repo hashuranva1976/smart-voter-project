@@ -145,19 +145,22 @@ def search_politicians():
     # 2. Handle Freeform Search Query `q`
     if q:
         norm_q = normalize_gujarati_search(q)
-        # Split query into words/tokens
         raw_tokens = re.split(r'[,.\s\-_/]+', norm_q)
         tokens = [t for t in raw_tokens if t and t.lower() not in noise_words]
         
         if not tokens:
-            # If all were noise words, use raw query
             tokens = [norm_q]
 
-        # For freeform query, each token must match at least one candidate attribute
         for t in tokens:
             token_param = f"%{t}%"
-            # If numeric token, check ward_no too
-            if t.isdigit():
+            # Party alias detection
+            if any(k in t.lower() for k in ['કોંગ્રેસ', 'કોગ્રેસ', 'congress', 'inc']):
+                where_clauses.append("(p.party_name LIKE '%INC%' OR p.party_name LIKE '%કોંગ્રેસ%' OR p.party_name LIKE '%Congress%')")
+            elif any(k in t.lower() for k in ['ભાજપ', 'ભાજપા', 'bjp']):
+                where_clauses.append("(p.party_name LIKE '%BJP%' OR p.party_name LIKE '%ભાજપ%')")
+            elif any(k in t.lower() for k in ['આપ', 'aap']):
+                where_clauses.append("(p.party_name LIKE '%AAP%' OR p.party_name LIKE '%આપ%')")
+            elif t.isdigit():
                 where_clauses.append("(p.ward_no = ? OR p.constituency LIKE ? OR p.full_name LIKE ?)")
                 params.extend([int(t), token_param, token_param])
             else:
@@ -192,6 +195,45 @@ def search_politicians():
 
     cursor.execute(query_sql, params)
     rows = [dict(r) for r in cursor.fetchall()]
+
+    # Fallback to OR if no results from strict AND
+    if not rows and q and len(tokens) > 1:
+        or_clauses = []
+        or_params = []
+        for t in tokens:
+            token_param = f"%{t}%"
+            if any(k in t.lower() for k in ['કોંગ્રેસ', 'કોગ્રેસ', 'congress', 'inc']):
+                or_clauses.append("(p.party_name LIKE '%INC%' OR p.party_name LIKE '%કોંગ્રેસ%')")
+            elif any(k in t.lower() for k in ['ભાજપ', 'ભાજપા', 'bjp']):
+                or_clauses.append("(p.party_name LIKE '%BJP%' OR p.party_name LIKE '%ભાજપ%')")
+            elif any(k in t.lower() for k in ['આપ', 'aap']):
+                or_clauses.append("(p.party_name LIKE '%AAP%' OR p.party_name LIKE '%આપ%')")
+            elif t.isdigit():
+                or_clauses.append("(p.ward_no = ? OR p.constituency LIKE ?)")
+                or_params.extend([int(t), token_param])
+            else:
+                or_clauses.append("(p.full_name LIKE ? OR p.constituency LIKE ?)")
+                or_params.extend([token_param, token_param])
+
+        if or_clauses:
+            fallback_sql = f"""
+                SELECT p.id, p.full_name, p.party_name, p.constituency, p.education, p.photo_url,
+                       p.district, p.taluka, p.village, p.ward_no,
+                       COALESCE(a.total_liabilities, 0) as liabilities,
+                       COALESCE(a.movable_assets + a.immovable_assets, 0) as total_assets,
+                       COALESCE(c.case_status, 'Clean Record') as case_status,
+                       COALESCE(perf.attendance_percentage, 0) as attendance_percentage
+                FROM politicians p
+                LEFT JOIN assets_liabilities a ON p.id = a.politician_id
+                LEFT JOIN criminal_cases c ON p.id = c.politician_id
+                LEFT JOIN parliament_performance perf ON p.id = perf.politician_id
+                WHERE {" OR ".join(or_clauses)}
+                GROUP BY p.id
+                ORDER BY p.id ASC
+                LIMIT 60
+            """
+            cursor.execute(fallback_sql, or_params)
+            rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return jsonify({"status": "success", "total": len(rows), "results": rows}), 200
 
