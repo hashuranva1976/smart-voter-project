@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 import numpy as np
 import faiss
@@ -75,17 +76,106 @@ def get_politicians():
     conn.close()
     return jsonify({"status": "success", "data": leaders})
 
+def normalize_gujarati_search(text):
+    if not text:
+        return ""
+    # Map Gujarati numerals to English
+    guj_nums = "૦૧૨૩૪૫૬૭૮૯"
+    for i, g in enumerate(guj_nums):
+        text = text.replace(g, str(i))
+    # Normalize common spelling variations
+    text = text.replace("જુનાગઢ", "જૂનાગઢ")
+    text = text.replace("વોડ", "વોર્ડ")
+    return text.strip()
+
 @app.route("/api/search", methods=["GET"])
 def search_politicians():
     q = request.args.get("q", "").strip()
-    if not q:
+    param_name = request.args.get("name", "").strip()
+    param_dist = request.args.get("district", "").strip()
+    param_tal = request.args.get("taluka", "").strip()
+    param_vil = request.args.get("village", "").strip()
+    param_ward = request.args.get("ward", "").strip()
+    param_party = request.args.get("party", "").strip()
+
+    if not q and not param_name and not param_dist and not param_tal and not param_vil and not param_ward and not param_party:
         return jsonify({"status": "success", "total": 0, "results": []}), 200
 
     conn = get_db()
     cursor = conn.cursor()
-    search_term = f"%{q}%"
-    cursor.execute("""
+
+    noise_words = {
+        'જિલ્લો', 'જિલ્લા', 'ગામ', 'તાલુકો', 'તાલુકા', 'વોડ', 'વોર્ડ', 'નંબર', 'નં', 
+        'નામ', 'શહેર', 'મનપા', 'મહાનગરપાલિકા', 'કોર્પોરેટર', 'district', 'village', 
+        'taluka', 'ward', 'number', 'no', 'name'
+    }
+
+    where_clauses = []
+    params = []
+
+    # 1. Handle Explicit Filters
+    if param_name:
+        pname = normalize_gujarati_search(param_name)
+        where_clauses.append("p.full_name LIKE ?")
+        params.append(f"%{pname}%")
+    if param_dist:
+        pdist = normalize_gujarati_search(param_dist)
+        where_clauses.append("(p.district LIKE ? OR p.constituency LIKE ?)")
+        params.extend([f"%{pdist}%", f"%{pdist}%"])
+    if param_tal:
+        ptal = normalize_gujarati_search(param_tal)
+        where_clauses.append("(p.taluka LIKE ? OR p.constituency LIKE ?)")
+        params.extend([f"%{ptal}%", f"%{ptal}%"])
+    if param_vil:
+        pvil = normalize_gujarati_search(param_vil)
+        where_clauses.append("(p.village LIKE ? OR p.constituency LIKE ?)")
+        params.extend([f"%{pvil}%", f"%{pvil}%"])
+    if param_ward:
+        pward = normalize_gujarati_search(param_ward)
+        where_clauses.append("(p.ward_no = ? OR p.constituency LIKE ?)")
+        try:
+            params.append(int(pward))
+        except:
+            params.append(0)
+        params.append(f"%{pward}%")
+    if param_party:
+        where_clauses.append("p.party_name LIKE ?")
+        params.append(f"%{param_party}%")
+
+    # 2. Handle Freeform Search Query `q`
+    if q:
+        norm_q = normalize_gujarati_search(q)
+        # Split query into words/tokens
+        raw_tokens = re.split(r'[,.\s\-_/]+', norm_q)
+        tokens = [t for t in raw_tokens if t and t.lower() not in noise_words]
+        
+        if not tokens:
+            # If all were noise words, use raw query
+            tokens = [norm_q]
+
+        # For freeform query, each token must match at least one candidate attribute
+        for t in tokens:
+            token_param = f"%{t}%"
+            # If numeric token, check ward_no too
+            if t.isdigit():
+                where_clauses.append("(p.ward_no = ? OR p.constituency LIKE ? OR p.full_name LIKE ?)")
+                params.extend([int(t), token_param, token_param])
+            else:
+                where_clauses.append("""(
+                    p.full_name LIKE ? OR 
+                    p.constituency LIKE ? OR 
+                    p.party_name LIKE ? OR 
+                    p.district LIKE ? OR 
+                    p.taluka LIKE ? OR 
+                    p.village LIKE ?
+                )""")
+                params.extend([token_param, token_param, token_param, token_param, token_param, token_param])
+
+    where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+    query_sql = f"""
         SELECT p.id, p.full_name, p.party_name, p.constituency, p.education, p.photo_url,
+               p.district, p.taluka, p.village, p.ward_no,
                COALESCE(a.total_liabilities, 0) as liabilities,
                COALESCE(a.movable_assets + a.immovable_assets, 0) as total_assets,
                COALESCE(c.case_status, 'Clean Record') as case_status,
@@ -94,16 +184,13 @@ def search_politicians():
         LEFT JOIN assets_liabilities a ON p.id = a.politician_id
         LEFT JOIN criminal_cases c ON p.id = c.politician_id
         LEFT JOIN parliament_performance perf ON p.id = perf.politician_id
-        WHERE p.full_name LIKE ? OR p.constituency LIKE ? OR p.party_name LIKE ?
+        WHERE {where_sql}
         GROUP BY p.id
-        ORDER BY 
-            CASE 
-                WHEN p.full_name LIKE ? THEN 1
-                WHEN p.constituency LIKE ? THEN 2
-                ELSE 3
-            END, p.id ASC
+        ORDER BY p.id ASC
         LIMIT 60
-    """, (search_term, search_term, search_term, f"{q}%", f"{q}%"))
+    """
+
+    cursor.execute(query_sql, params)
     rows = [dict(r) for r in cursor.fetchall()]
     conn.close()
     return jsonify({"status": "success", "total": len(rows), "results": rows}), 200

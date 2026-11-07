@@ -15,6 +15,15 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen> {
   final TextEditingController _searchController = TextEditingController();
+  
+  // એડવાન્સ ફિલ્ટર્સ માટે controllers
+  final TextEditingController _filterNameCtrl = TextEditingController();
+  final TextEditingController _filterDistrictCtrl = TextEditingController();
+  final TextEditingController _filterTalukaCtrl = TextEditingController();
+  final TextEditingController _filterWardCtrl = TextEditingController();
+  String _selectedParty = 'તમામ';
+
+  bool _showAdvancedFilters = false;
   List<dynamic> _results = [];
   bool _loading = false;
   String _error = '';
@@ -28,9 +37,15 @@ class _SearchScreenState extends State<SearchScreen> {
     return url.replaceAll(RegExp(r'/+$'), '');
   }
 
-  Future<void> _performSearch(String query) async {
-    final q = query.trim();
-    if (q.isEmpty) {
+  Future<void> _performSearch({String? customQuery}) async {
+    final q = (customQuery ?? _searchController.text).trim();
+    final name = _filterNameCtrl.text.trim();
+    final dist = _filterDistrictCtrl.text.trim();
+    final tal = _filterTalukaCtrl.text.trim();
+    final ward = _filterWardCtrl.text.trim();
+    final party = _selectedParty != 'તમામ' ? _selectedParty : '';
+
+    if (q.isEmpty && name.isEmpty && dist.isEmpty && tal.isEmpty && ward.isEmpty && party.isEmpty) {
       setState(() {
         _results = [];
         _error = '';
@@ -44,7 +59,15 @@ class _SearchScreenState extends State<SearchScreen> {
     });
 
     try {
-      final uri = Uri.parse('$_apiBaseUrl/api/search?q=${Uri.encodeComponent(q)}');
+      final queryParams = <String, String>{};
+      if (q.isNotEmpty) queryParams['q'] = q;
+      if (name.isNotEmpty) queryParams['name'] = name;
+      if (dist.isNotEmpty) queryParams['district'] = dist;
+      if (tal.isNotEmpty) queryParams['taluka'] = tal;
+      if (ward.isNotEmpty) queryParams['ward'] = ward;
+      if (party.isNotEmpty) queryParams['party'] = party;
+
+      final uri = Uri.parse('$_apiBaseUrl/api/search').replace(queryParameters: queryParams);
       final res = await http.get(uri).timeout(const Duration(seconds: 15));
 
       if (!mounted) return;
@@ -54,11 +77,11 @@ class _SearchScreenState extends State<SearchScreen> {
         setState(() {
           _results = data['results'] ?? [];
           if (_results.isEmpty) {
-            _error = 'કોઈ પરિણામ મળ્યા નથી. અન્ય નામ, ગામ કે જિલ્લો લખીને પ્રયાસ કરો.';
+            _error = 'કોઈ પરિણામ મળ્યા નથી. કૃપા કરીને નામ, ગામ, વોર્ડ કે જિલ્લો તપાસીને ફરી પ્રયાસ કરો.';
           }
         });
       } else {
-        setState(() => _error = 'સર્વર ભૂલ (કોડ: ${res.statusCode})');
+        setState(() => _error = 'સર્વર ભૂલ (કોડ: ${res.statusCode}). કૃપા કરીને થોડીવાર પછી પ્રયાસ કરો.');
       }
     } catch (e) {
       if (!mounted) return;
@@ -66,6 +89,19 @@ class _SearchScreenState extends State<SearchScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _resetFilters() {
+    _searchController.clear();
+    _filterNameCtrl.clear();
+    _filterDistrictCtrl.clear();
+    _filterTalukaCtrl.clear();
+    _filterWardCtrl.clear();
+    setState(() {
+      _selectedParty = 'તમામ';
+      _results = [];
+      _error = '';
+    });
   }
 
   Future<void> _openCandidateDetail(int politicianId) async {
@@ -124,7 +160,6 @@ class _SearchScreenState extends State<SearchScreen> {
       return;
     }
 
-    // Fetch full report card for comparison
     try {
       final uri = Uri.parse('$_apiBaseUrl/api/politician/$id');
       final res = await http.get(uri).timeout(const Duration(seconds: 15));
@@ -176,7 +211,7 @@ class _SearchScreenState extends State<SearchScreen> {
       side: BorderSide(color: Colors.indigo.shade200),
       onPressed: () {
         _searchController.text = query;
-        _performSearch(query);
+        _performSearch(customQuery: query);
       },
     );
   }
@@ -188,6 +223,15 @@ class _SearchScreenState extends State<SearchScreen> {
         title: const Text('નેતા / કોર્પોરેટર સર્ચ'),
         backgroundColor: Colors.indigo,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: Icon(_showAdvancedFilters ? Icons.filter_alt : Icons.filter_alt_outlined),
+            tooltip: 'વિગતવાર ફિલ્ટર (જિલ્લો, ગામ, વોર્ડ, નામ)',
+            onPressed: () {
+              setState(() => _showAdvancedFilters = !_showAdvancedFilters);
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -198,48 +242,182 @@ class _SearchScreenState extends State<SearchScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextField(
-                  controller: _searchController,
-                  textInputAction: TextInputAction.search,
-                  onSubmitted: _performSearch,
-                  decoration: InputDecoration(
-                    hintText: 'નામ, ગામ/શહેર, વોર્ડ, જિલ્લો શોધો...',
-                    prefixIcon: const Icon(Icons.search, color: Colors.indigo),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchController.clear();
-                              _performSearch('');
-                            },
-                          )
-                        : null,
-                    filled: true,
-                    fillColor: Colors.white,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: BorderSide.none,
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        textInputAction: TextInputAction.search,
+                        onSubmitted: (val) => _performSearch(),
+                        decoration: InputDecoration(
+                          hintText: 'નામ, ગામ/શહેર, વોર્ડ, જિલ્લો લખો...',
+                          prefixIcon: const Icon(Icons.search, color: Colors.indigo),
+                          suffixIcon: _searchController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    _performSearch();
+                                  },
+                                )
+                              : null,
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.indigo,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      ),
+                      onPressed: () => _performSearch(),
+                      child: const Text('શોધો'),
+                    ),
+                  ],
+                ),
+
+                // વિગતવાર ફિલ્ટર પેનલ (Expandable Multi-Field Form)
+                if (_showAdvancedFilters) ...[
+                  const SizedBox(height: 12),
+                  Card(
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    elevation: 2,
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'વિગતવાર શોધ ફિલ્ટર્સ:',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.indigo),
+                              ),
+                              TextButton(
+                                onPressed: _resetFilters,
+                                child: const Text('રીસેટ કરો', style: TextStyle(color: Colors.red)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _filterDistrictCtrl,
+                                  decoration: const InputDecoration(
+                                    labelText: 'જિલ્લો / મનપા',
+                                    hintText: 'દા.ત. જૂનાગઢ, અમદાવાદ',
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: TextField(
+                                  controller: _filterTalukaCtrl,
+                                  decoration: const InputDecoration(
+                                    labelText: 'તાલુકો / ગામ',
+                                    hintText: 'દા.ત. જૂનાગઢ, ગોતા',
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                flex: 1,
+                                child: TextField(
+                                  controller: _filterWardCtrl,
+                                  keyboardType: TextInputType.number,
+                                  decoration: const InputDecoration(
+                                    labelText: 'વોર્ડ નં.',
+                                    hintText: 'દા.ત. 15',
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                flex: 2,
+                                child: TextField(
+                                  controller: _filterNameCtrl,
+                                  decoration: const InputDecoration(
+                                    labelText: 'નેતાનું નામ',
+                                    hintText: 'દા.ત. રણજીત લાખાભાઈ પરમાર',
+                                    isDense: true,
+                                    border: OutlineInputBorder(),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              const Text('પક્ષ: ', style: TextStyle(fontWeight: FontWeight.w500)),
+                              const SizedBox(width: 8),
+                              DropdownButton<String>(
+                                value: _selectedParty,
+                                isDense: true,
+                                items: ['તમામ', 'BJP', 'INC', 'AAP', 'AIMIM', 'IND'].map((p) {
+                                  return DropdownMenuItem(value: p, child: Text(p));
+                                }).toList(),
+                                onChanged: (val) {
+                                  if (val != null) setState(() => _selectedParty = val);
+                                },
+                              ),
+                              const Spacer(),
+                              ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.indigo,
+                                  foregroundColor: Colors.white,
+                                ),
+                                onPressed: () => _performSearch(),
+                                icon: const Icon(Icons.search, size: 18),
+                                label: const Text('ફિલ્ટર લાગુ કરો'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
+                ],
+
                 const SizedBox(height: 8),
                 // ઝડપી ફિલ્ટર્સ
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      _buildSuggestionChip('ગાંધીનગર (GMC)', 'ગાંધીનગર'),
+                      _buildSuggestionChip('📍 જૂનાગઢ (વોર્ડ ૧૫ - રણજીત પરમાર)', 'જૂનાગઢ વોર્ડ 15 રણજીત'),
                       const SizedBox(width: 6),
-                      _buildSuggestionChip('અમદાવાદ (AMC)', 'અમદાવાદ'),
+                      _buildSuggestionChip('📍 ગાંધીનગર (વોર્ડ ૧ - શિલ્પાબેન)', 'ગાંધીનગર 1 શિલ્પાબેન'),
+                      const SizedBox(width: 6),
+                      _buildSuggestionChip('📍 અમદાવાદ (ગોતા - વોર્ડ ૧)', 'ગોતા વોર્ડ 1'),
                       const SizedBox(width: 6),
                       _buildSuggestionChip('સુરત (SMC)', 'સુરત'),
                       const SizedBox(width: 6),
                       _buildSuggestionChip('રાજકોટ (RMC)', 'રાજકોટ'),
                       const SizedBox(width: 6),
                       _buildSuggestionChip('વડોદરા (VMC)', 'વડોદરા'),
-                      const SizedBox(width: 6),
-                      _buildSuggestionChip('ગોતા (વોર્ડ ૧)', 'ગોતા'),
                       const SizedBox(width: 6),
                       _buildSuggestionChip('ભાજપ (BJP)', 'BJP'),
                       const SizedBox(width: 6),
@@ -292,7 +470,7 @@ class _SearchScreenState extends State<SearchScreen> {
                                   ),
                                   const SizedBox(height: 8),
                                   const Text(
-                                    'ઉદાહરણ:\n• નામ: "શિલ્પાબેન", "અલ્પેશ", "નરેન્દ્ર મોદી"\n• વિસ્તાર: "ગાંધીનગર વોર્ડ ૧", "ગોતા", "સુરત"\n• પક્ષ: "BJP", "INC", "AAP"',
+                                    'ઉદાહરણ:\n• એક જ લાઈનમાં: "જુનાગઢ વોર્ડ 15 રણજીત લાખાભાઈ પરમાર"\n• અથવા ઉપર આપેલા "ફિલ્ટર" આઇકોન પર ક્લિક કરીને જિલ્લો, ગામ, વોર્ડ અને નામ અલગથી ભરીને શોધો.',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(color: Colors.black54, height: 1.5),
                                   ),
@@ -312,10 +490,11 @@ class _SearchScreenState extends State<SearchScreen> {
                               final constituency = item['constituency']?.toString() ?? '-';
                               final edu = item['education']?.toString() ?? '-';
                               final assets = item['total_assets'];
+                              final caseStatus = item['case_status']?.toString() ?? 'Clean Record';
                               final isSelected = _selectedForCompare.contains(id);
 
                               return Card(
-                                elevation: 1.5,
+                                elevation: 2,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                   side: isSelected
@@ -389,16 +568,16 @@ class _SearchScreenState extends State<SearchScreen> {
                                                 ),
                                               ),
                                               const SizedBox(height: 4),
-                                              Row(
+                                              Wrap(
+                                                spacing: 8,
+                                                runSpacing: 4,
                                                 children: [
                                                   Text(
                                                     'શિક્ષણ: $edu',
                                                     style: const TextStyle(
                                                         fontSize: 12, color: Colors.black54),
                                                   ),
-                                                  if (assets != null) ...[
-                                                    const Text(' • ',
-                                                        style: TextStyle(color: Colors.black38)),
+                                                  if (assets != null)
                                                     Text(
                                                       'મિલકત: ${_formatInr(assets)}',
                                                       style: const TextStyle(
@@ -406,7 +585,26 @@ class _SearchScreenState extends State<SearchScreen> {
                                                           color: Colors.green,
                                                           fontWeight: FontWeight.bold),
                                                     ),
-                                                  ],
+                                                  Container(
+                                                    padding: const EdgeInsets.symmetric(
+                                                        horizontal: 6, vertical: 1),
+                                                    decoration: BoxDecoration(
+                                                      color: caseStatus.toLowerCase().contains('clean')
+                                                          ? Colors.green.shade50
+                                                          : Colors.red.shade50,
+                                                      borderRadius: BorderRadius.circular(8),
+                                                    ),
+                                                    child: Text(
+                                                      caseStatus,
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        color: caseStatus.toLowerCase().contains('clean')
+                                                            ? Colors.green.shade700
+                                                            : Colors.red.shade700,
+                                                        fontWeight: FontWeight.w600,
+                                                      ),
+                                                    ),
+                                                  ),
                                                 ],
                                               ),
                                             ],
