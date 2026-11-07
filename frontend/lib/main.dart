@@ -7,6 +7,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:http/http.dart' as http;
 import 'models/scan_models.dart';
 import 'screens/scan_result_screen.dart';
+import 'screens/search_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,25 +25,80 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.indigo,
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      home: const MainNavigationScreen(),
       debugShowCheckedModeBanner: false,
     );
   }
 }
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+class MainNavigationScreen extends StatefulWidget {
+  const MainNavigationScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<MainNavigationScreen> createState() => _MainNavigationScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _MainNavigationScreenState extends State<MainNavigationScreen> {
+  int _currentIndex = 0;
+  String serverUrl = 'https://smart-voter-project.onrender.com/api/scan-poster';
+
+  void _updateServerUrl(String newUrl) {
+    setState(() => serverUrl = newUrl);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          PosterScanTab(
+            serverUrl: serverUrl,
+            onServerUrlChanged: _updateServerUrl,
+            onOpenSearch: () => setState(() => _currentIndex = 1),
+          ),
+          SearchScreen(serverUrl: serverUrl),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _currentIndex,
+        onDestinationSelected: (idx) => setState(() => _currentIndex = idx),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.document_scanner_outlined),
+            selectedIcon: Icon(Icons.document_scanner, color: Colors.indigo),
+            label: 'પોસ્ટર સ્કેનર',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.search_outlined),
+            selectedIcon: Icon(Icons.search, color: Colors.indigo),
+            label: 'નેતા / વોર્ડ શોધો',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class PosterScanTab extends StatefulWidget {
+  final String serverUrl;
+  final ValueChanged<String> onServerUrlChanged;
+  final VoidCallback onOpenSearch;
+
+  const PosterScanTab({
+    super.key,
+    required this.serverUrl,
+    required this.onServerUrlChanged,
+    required this.onOpenSearch,
+  });
+
+  @override
+  State<PosterScanTab> createState() => _PosterScanTabState();
+}
+
+class _PosterScanTabState extends State<PosterScanTab> {
   bool _loading = false;
   final ImagePicker _picker = ImagePicker();
-
-  // લાઈવ ક્લાઉડ સર્વર (Render) અથવા લોકલ સર્વર
-  String serverUrl = 'https://smart-voter-project.onrender.com/api/scan-poster';
 
   Future<Size> _getSize(File file) async {
     final bytes = await file.readAsBytes();
@@ -53,7 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showSettingsDialog() {
-    final controller = TextEditingController(text: serverUrl);
+    final controller = TextEditingController(text: widget.serverUrl);
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -63,9 +119,9 @@ class _HomeScreenState extends State<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'એમ્યુલેટર: http://10.0.2.2:5000/api/scan-poster\n'
-              'રિયલ ફોન: http://<PC-IP>:5000/api/scan-poster\n'
-              'પીસી/ડેસ્કટોપ: http://127.0.0.1:5000/api/scan-poster',
+              'ક્લાઉડ: https://smart-voter-project.onrender.com/api/scan-poster\n'
+              'લોકલ એમ્યુલેટર: http://10.0.2.2:5000/api/scan-poster\n'
+              'રિયલ ફોન (WiFi): http://<PC-IP>:5000/api/scan-poster',
               style: TextStyle(fontSize: 12, color: Colors.black54),
             ),
             const SizedBox(height: 12),
@@ -91,7 +147,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (!newUrl.endsWith('/api/scan-poster')) {
                   newUrl = '$newUrl/api/scan-poster';
                 }
-                setState(() => serverUrl = newUrl);
+                widget.onServerUrlChanged(newUrl);
               }
               Navigator.pop(ctx);
             },
@@ -116,7 +172,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       final size = await _getSize(file);
-      final req = http.MultipartRequest('POST', Uri.parse(serverUrl));
+      final req = http.MultipartRequest('POST', Uri.parse(widget.serverUrl));
       req.files.add(await http.MultipartFile.fromPath('image', file.path));
 
       final streamedResponse = await req.send().timeout(const Duration(seconds: 90));
@@ -164,6 +220,11 @@ class _HomeScreenState extends State<HomeScreen> {
         foregroundColor: Colors.white,
         actions: [
           IconButton(
+            icon: const Icon(Icons.search),
+            tooltip: 'નામ/ગામ/વોર્ડથી શોધો',
+            onPressed: widget.onOpenSearch,
+          ),
+          IconButton(
             icon: const Icon(Icons.settings),
             tooltip: 'સર્વર સેટિંગ્સ',
             onPressed: _showSettingsDialog,
@@ -180,25 +241,86 @@ class _HomeScreenState extends State<HomeScreen> {
                   Text('પોસ્ટરનું વિશ્લેષણ થઈ રહ્યું છે...'),
                 ],
               )
-            : Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.document_scanner, size: 80, color: Colors.indigo),
-                  const SizedBox(height: 16),
-                  const Text('ચૂંટણી પોસ્ટરનો ફોટો પાડો અથવા પસંદ કરો', style: TextStyle(fontSize: 16)),
-                  const SizedBox(height: 24),
-                  ElevatedButton.icon(
-                    onPressed: () => _pickAndUpload(ImageSource.camera),
-                    icon: const Icon(Icons.camera_alt),
-                    label: const Text('કેમેરાથી સ્કેન કરો'),
-                  ),
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () => _pickAndUpload(ImageSource.gallery),
-                    icon: const Icon(Icons.photo_library),
-                    label: const Text('ગેલેરીમાંથી પસંદ કરો'),
-                  ),
-                ],
+            : SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // ઝડપી સર્ચ બેનર કાર્ડ
+                    Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      color: Colors.indigo.shade50,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: widget.onOpenSearch,
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                          child: Row(
+                            children: [
+                              Icon(Icons.search, color: Colors.indigo, size: 28),
+                              SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'નામ, ગામ, વોર્ડ કે જિલ્લો થી શોધો',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 15,
+                                        color: Colors.indigo,
+                                      ),
+                                    ),
+                                    SizedBox(height: 2),
+                                    Text(
+                                      'ફોટો વગર પણ સમગ્ર ગુજરાતના ઉમેદવારો ઉપલબ્ધ',
+                                      style: TextStyle(fontSize: 12, color: Colors.black54),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(Icons.arrow_forward_ios, size: 16, color: Colors.indigo),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 36),
+                    const Icon(Icons.document_scanner, size: 80, color: Colors.indigo),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'અથવા ચૂંટણી પોસ્ટરનો ફોટો પાડો',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'પોસ્ટરમાં રહેલા તમામ નેતાઓને ઓટોમેટિક ઓળખશે',
+                      style: TextStyle(fontSize: 13, color: Colors.black54),
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                      ),
+                      onPressed: () => _pickAndUpload(ImageSource.camera),
+                      icon: const Icon(Icons.camera_alt),
+                      label: const Text('કેમેરાથી સ્કેન કરો', style: TextStyle(fontSize: 16)),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                      ),
+                      onPressed: () => _pickAndUpload(ImageSource.gallery),
+                      icon: const Icon(Icons.photo_library),
+                      label: const Text('ગેલેરીમાંથી પસંદ કરો', style: TextStyle(fontSize: 16)),
+                    ),
+                  ],
+                ),
               ),
       ),
     );
