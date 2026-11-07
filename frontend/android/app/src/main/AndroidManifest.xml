@@ -10,7 +10,7 @@
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">
         <activity
-            android:name=".MainActivity"
+            android:name="com.example.smart_voter.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""

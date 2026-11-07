@@ -9,6 +9,7 @@ import 'models/scan_models.dart';
 import 'screens/scan_result_screen.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
@@ -40,8 +41,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _loading = false;
   final ImagePicker _picker = ImagePicker();
 
-  // એન્ડ્રોઇડ એમ્યુલેટર માટે 10.0.2.2, વાસ્તવિક મોબાઇલ માટે તમારો PC નો લોકલ IP (દા.ત. 192.168.1.15)
-  String serverUrl = 'http://10.0.2.2:5000/api/scan-poster';
+  // લાઈવ ક્લાઉડ સર્વર (Render) અથવા લોકલ સર્વર
+  String serverUrl = 'https://smart-voter-project.onrender.com/api/scan-poster';
 
   Future<Size> _getSize(File file) async {
     final bytes = await file.readAsBytes();
