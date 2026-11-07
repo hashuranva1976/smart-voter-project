@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: smart-voter-backend
+    runtime: docker
+    dockerContext: backend
+    dockerfilePath: backend/Dockerfile
+    plan: free
+    healthCheckPath: /api/health

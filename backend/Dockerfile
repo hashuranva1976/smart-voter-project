@@ -22,7 +22,8 @@ COPY . .
 # Ensure upload and known_faces folders exist
 RUN mkdir -p temp_uploads known_faces
 
-EXPOSE 5000
+ENV PORT=10000
+EXPOSE 10000
 
-# Start with Gunicorn production WSGI server
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--timeout", "120", "app:app"]
+# Start with Gunicorn production WSGI server using dynamic port
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT:-10000} --workers 1 --threads 4 --timeout 120 app:app"]
