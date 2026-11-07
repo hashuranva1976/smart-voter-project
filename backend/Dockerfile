@@ -12,7 +12,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy requirements and install python packages
+ENV CMAKE_BUILD_PARALLEL_LEVEL=1
+
+# Pre-install dlib-bin precompiled wheel and face-recognition without compiling from source
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir dlib-bin && \
+    pip install --no-cache-dir face-recognition-models Pillow Click && \
+    pip install --no-cache-dir --no-deps face-recognition==1.3.0
+
+# Copy requirements and install remaining python packages
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
