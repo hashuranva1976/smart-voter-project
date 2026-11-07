@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python Virtual Environments
+venv/
+env/
+ENV/
+backend/venv/
+
+# Temporary / Uploads
+backend/temp_uploads/*
+!backend/temp_uploads/.gitkeep
+
+# Flutter / Dart
+frontend/.dart_tool/
+frontend/.flutter-plugins
+frontend/.flutter-plugins-dependencies
+frontend/.pub-cache/
+frontend/.pub/
+frontend/build/
+**/build/
+
+# Android Studio / IntelliJ / VS Code
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+frontend/android_backup/
+local.properties
+key.properties
+
+# OS Generated
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Android release build output (optional if build/ is already ignored)
+*.apk
