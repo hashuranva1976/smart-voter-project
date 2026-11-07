@@ -103,7 +103,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickAndUpload(ImageSource source) async {
-    final XFile? xf = await _picker.pickImage(source: source, imageQuality: 85);
+    final XFile? xf = await _picker.pickImage(
+      source: source,
+      maxWidth: 1280,
+      maxHeight: 1280,
+      imageQuality: 80,
+    );
     if (xf == null) return;
 
     final file = File(xf.path);
@@ -114,7 +119,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final req = http.MultipartRequest('POST', Uri.parse(serverUrl));
       req.files.add(await http.MultipartFile.fromPath('image', file.path));
 
-      final streamedResponse = await req.send().timeout(const Duration(seconds: 30));
+      final streamedResponse = await req.send().timeout(const Duration(seconds: 90));
       final res = await http.Response.fromStream(streamedResponse);
 
       if (!mounted) return;

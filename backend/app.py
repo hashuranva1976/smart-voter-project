@@ -3,6 +3,7 @@ import sqlite3
 import numpy as np
 import faiss
 import face_recognition
+from PIL import Image, ImageOps
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -122,7 +123,28 @@ def scan_poster():
     file.save(file_path)
 
     try:
-        img = face_recognition.load_image_file(file_path)
+        pil_img = Image.open(file_path)
+        pil_img = ImageOps.exif_transpose(pil_img)
+
+        orig_w, orig_h = pil_img.size
+        max_dim = 1024
+
+        if orig_w > max_dim or orig_h > max_dim:
+            if orig_w > orig_h:
+                new_w = max_dim
+                new_h = int(orig_h * (max_dim / orig_w))
+            else:
+                new_h = max_dim
+                new_w = int(orig_w * (max_dim / orig_h))
+            scale_x = orig_w / new_w
+            scale_y = orig_h / new_h
+            resized_pil = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            img = np.array(resized_pil.convert('RGB'))
+        else:
+            scale_x = 1.0
+            scale_y = 1.0
+            img = np.array(pil_img.convert('RGB'))
+
         locations = face_recognition.face_locations(img, model="hog")
         if not locations:
             return jsonify({"status": "success", "total_faces_found": 0, "leaders": []}), 200
@@ -141,7 +163,12 @@ def scan_poster():
 
             face_obj = {
                 "face_index": idx + 1,
-                "box": {"top": top, "right": right, "bottom": bottom, "left": left}
+                "box": {
+                    "top": int(top * scale_y),
+                    "right": int(right * scale_x),
+                    "bottom": int(bottom * scale_y),
+                    "left": int(left * scale_x)
+                }
             }
 
             if dist <= THRESHOLD and matched_id != -1:
