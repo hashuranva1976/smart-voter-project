@@ -54,9 +54,11 @@ def fetch_report_card(politician_id):
     conn.close()
     return data
 
-@app.route("/", methods=["GET"])
+@app.route("/", methods=["GET", "POST"])
 @app.route("/api/health", methods=["GET"])
 def health_check():
+    if request.method == "POST":
+        return scan_poster()
     return jsonify({
         "status": "online",
         "service": "Smart Voter Backend API",
@@ -103,8 +105,14 @@ def register_leader_face():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route("/api/scan-poster", methods=["POST"])
+@app.route("/api/scan-poster", methods=["GET", "POST"])
 def scan_poster():
+    if request.method == "GET":
+        return jsonify({
+            "status": "online",
+            "message": "Smart Voter Scan API is ready. Please send a POST request with an image file to scan."
+        }), 200
+
     if "image" not in request.files:
         return jsonify({"status": "error", "message": "ઇમેજ ફાઇલ મળી નથી"}), 400
 

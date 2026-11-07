@@ -85,8 +85,12 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           ElevatedButton(
             onPressed: () {
-              final newUrl = controller.text.trim();
+              var newUrl = controller.text.trim();
               if (newUrl.isNotEmpty) {
+                newUrl = newUrl.replaceAll(RegExp(r'/+$'), '');
+                if (!newUrl.endsWith('/api/scan-poster')) {
+                  newUrl = '$newUrl/api/scan-poster';
+                }
                 setState(() => serverUrl = newUrl);
               }
               Navigator.pop(ctx);
