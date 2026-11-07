@@ -95,10 +95,11 @@ def search_politicians():
     param_dist = request.args.get("district", "").strip()
     param_tal = request.args.get("taluka", "").strip()
     param_vil = request.args.get("village", "").strip()
+    param_city = request.args.get("city", "").strip()
     param_ward = request.args.get("ward", "").strip()
     param_party = request.args.get("party", "").strip()
 
-    if not q and not param_name and not param_dist and not param_tal and not param_vil and not param_ward and not param_party:
+    if not q and not param_name and not param_dist and not param_tal and not param_vil and not param_city and not param_ward and not param_party:
         return jsonify({"status": "success", "total": 0, "results": []}), 200
 
     conn = get_db()
@@ -130,6 +131,10 @@ def search_politicians():
         pvil = normalize_gujarati_search(param_vil)
         where_clauses.append("(p.village LIKE ? OR p.constituency LIKE ?)")
         params.extend([f"%{pvil}%", f"%{pvil}%"])
+    if param_city:
+        pcity = normalize_gujarati_search(param_city)
+        where_clauses.append("(p.village LIKE ? OR p.constituency LIKE ? OR p.district LIKE ?)")
+        params.extend([f"%{pcity}%", f"%{pcity}%", f"%{pcity}%"])
     if param_ward:
         pward = normalize_gujarati_search(param_ward)
         where_clauses.append("(p.ward_no = ? OR p.constituency LIKE ?)")
@@ -138,9 +143,19 @@ def search_politicians():
         except:
             params.append(0)
         params.append(f"%{pward}%")
-    if param_party:
-        where_clauses.append("p.party_name LIKE ?")
-        params.append(f"%{param_party}%")
+    if param_party and param_party != 'તમામ':
+        party_clean = param_party.strip().lower()
+        if any(k in party_clean for k in ['કોંગ્રેસ', 'કોગ્રેસ', 'congress', 'inc']):
+            where_clauses.append("(p.party_name LIKE '%INC%' OR p.party_name LIKE '%કોંગ્રેસ%' OR p.party_name LIKE '%Congress%')")
+        elif any(k in party_clean for k in ['ભાજપ', 'ભાજપા', 'bjp']):
+            where_clauses.append("(p.party_name LIKE '%BJP%' OR p.party_name LIKE '%ભાજપ%')")
+        elif any(k in party_clean for k in ['આપ', 'aap']):
+            where_clauses.append("(p.party_name LIKE '%AAP%' OR p.party_name LIKE '%આપ%')")
+        elif any(k in party_clean for k in ['અપક્ષ', 'ind']):
+            where_clauses.append("(p.party_name LIKE '%IND%' OR p.party_name LIKE '%અપક્ષ%')")
+        else:
+            where_clauses.append("p.party_name LIKE ?")
+            params.append(f"%{param_party}%")
 
     # 2. Handle Freeform Search Query `q`
     if q:
