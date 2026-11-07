@@ -75,6 +75,46 @@ def get_politicians():
     conn.close()
     return jsonify({"status": "success", "data": leaders})
 
+@app.route("/api/search", methods=["GET"])
+def search_politicians():
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify({"status": "success", "total": 0, "results": []}), 200
+
+    conn = get_db()
+    cursor = conn.cursor()
+    search_term = f"%{q}%"
+    cursor.execute("""
+        SELECT p.id, p.full_name, p.party_name, p.constituency, p.education, p.photo_url,
+               COALESCE(a.total_liabilities, 0) as liabilities,
+               COALESCE(a.movable_assets + a.immovable_assets, 0) as total_assets,
+               COALESCE(c.case_status, 'Clean Record') as case_status,
+               COALESCE(perf.attendance_percentage, 0) as attendance_percentage
+        FROM politicians p
+        LEFT JOIN assets_liabilities a ON p.id = a.politician_id
+        LEFT JOIN criminal_cases c ON p.id = c.politician_id
+        LEFT JOIN parliament_performance perf ON p.id = perf.politician_id
+        WHERE p.full_name LIKE ? OR p.constituency LIKE ? OR p.party_name LIKE ?
+        GROUP BY p.id
+        ORDER BY 
+            CASE 
+                WHEN p.full_name LIKE ? THEN 1
+                WHEN p.constituency LIKE ? THEN 2
+                ELSE 3
+            END, p.id ASC
+        LIMIT 60
+    """, (search_term, search_term, search_term, f"{q}%", f"{q}%"))
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return jsonify({"status": "success", "total": len(rows), "results": rows}), 200
+
+@app.route("/api/politician/<int:politician_id>", methods=["GET"])
+def get_politician_detail(politician_id):
+    report = fetch_report_card(politician_id)
+    if not report:
+        return jsonify({"status": "error", "message": "નેતા/કોર્પોરેટર મળ્યા નથી"}), 404
+    return jsonify({"status": "success", "data": report}), 200
+
 @app.route("/api/register-leader-face", methods=["POST"])
 def register_leader_face():
     """known_faces ફોલ્ડરમાંથી નવો ચહેરો FAISS માં એડ કરવાનો એન્ડપોઇન્ટ"""
