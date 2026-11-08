@@ -550,7 +550,7 @@ class _VotingScreenState extends State<VotingScreen> with SingleTickerProviderSt
             children: [
               ActionChip(
                 avatar: const Icon(Icons.person, size: 16, color: Colors.indigo),
-                label: const Text('હસમુખભાઈ (વોર્ડ ૧૫)'),
+                label: const Text('રાણવા હરસુખભાઈ મુળજીભાઈ (વોર્ડ ૧૫)'),
                 onPressed: () {
                   _aadhaarController.text = '123456789012';
                   _verifyAadhaar('123456789012');
