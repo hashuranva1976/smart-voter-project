@@ -430,6 +430,50 @@ def lookup_voter():
     conn.close()
     return jsonify({"status": "success", "voter": v_dict}), 200
 
+@app.route("/api/voter/register", methods=["POST"])
+def register_voter():
+    data = request.get_json() or {}
+    aadhaar = data.get("aadhaar_number", "").replace(" ", "").strip()
+    full_name = data.get("full_name", "").strip()
+    age = int(data.get("age") or 18)
+    gender = data.get("gender") or "પુરુષ (Male)"
+    district = data.get("district") or "જૂનાગઢ"
+    taluka = data.get("taluka") or "જૂનાગઢ"
+    ward_no = int(data.get("ward_no") or 15)
+    booth_no = int(data.get("booth_no") or 102)
+
+    if len(aadhaar) != 12 or not aadhaar.isdigit():
+        return jsonify({"status": "error", "message": "માન્ય ૧૨-અંકનો આધાર કાર્ડ નંબર દાખલ કરો"}), 400
+    if not full_name:
+        return jsonify({"status": "error", "message": "મતદારનું પૂરું નામ દાખલ કરો"}), 400
+
+    a_hash = hash_aadhaar(aadhaar)
+    masked = f"XXXX XXXX {aadhaar[-4:]}"
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM voters WHERE aadhaar_hash = ?", (a_hash,))
+    existing = cursor.fetchone()
+
+    if existing:
+        cursor.execute("""
+            UPDATE voters
+            SET full_name = ?, age = ?, gender = ?, district = ?, taluka = ?, ward_no = ?, booth_no = ?
+            WHERE aadhaar_hash = ?
+        """, (full_name, age, gender, district, taluka, ward_no, booth_no, a_hash))
+    else:
+        cursor.execute("""
+            INSERT INTO voters (aadhaar_hash, aadhaar_masked, full_name, age, gender, district, taluka, ward_no, booth_no, has_voted)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """, (a_hash, masked, full_name, age, gender, district, taluka, ward_no, booth_no))
+
+    conn.commit()
+    cursor.execute("SELECT * FROM voters WHERE aadhaar_hash = ?", (a_hash,))
+    voter = dict(cursor.fetchone())
+    conn.close()
+
+    return jsonify({"status": "success", "message": f"મતદાર {full_name} ની સફળતાપૂર્વક નોંધણી થઈ!", "voter": voter}), 201
+
 @app.route("/api/voting/ballot", methods=["GET"])
 def get_ballot():
     district = request.args.get("district", "જૂનાગઢ")

@@ -382,6 +382,357 @@ class _VotingScreenState extends State<VotingScreen> with SingleTickerProviderSt
     });
   }
 
+  // --- નવો મતદાર નોંધણી ડાયલોગ (New Voter Registration) ---
+  Future<void> _openNewVoterDialog() async {
+    final formKey = GlobalKey<FormState>();
+    final nameCtrl = TextEditingController();
+    final aadhaarCtrl = TextEditingController(
+      text: _aadhaarController.text.replaceAll(' ', '').trim(),
+    );
+    final ageCtrl = TextEditingController(text: '35');
+    final boothCtrl = TextEditingController(text: '102');
+
+    String selectedGender = 'પુરુષ (Male)';
+    int selectedWard = 15;
+    String selectedDistrict = 'જૂનાગઢ';
+    bool isSubmitting = false;
+    String? dialogError;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                top: 20,
+                bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
+              ),
+              child: SingleChildScrollView(
+                child: Form(
+                  key: formKey,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // હેડર
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: Colors.indigo.shade50,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.person_add_alt_1, color: Colors.indigo, size: 28),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'નવા મતદારની નોંધણી',
+                                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.indigo),
+                                ),
+                                Text(
+                                  'મતદાર યાદી (Electoral Roll) માં નવું નામ ઉમેરો',
+                                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                                ),
+                              ],
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.close),
+                            onPressed: () => Navigator.pop(ctx),
+                          ),
+                        ],
+                      ),
+                      const Divider(height: 24),
+
+                      if (dialogError != null)
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Colors.red.shade50,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.red.shade200),
+                          ),
+                          child: Text(
+                            dialogError!,
+                            style: const TextStyle(color: Colors.red, fontSize: 13),
+                          ),
+                        ),
+
+                      // મતદારનું પૂરું નામ
+                      TextFormField(
+                        controller: nameCtrl,
+                        decoration: InputDecoration(
+                          labelText: 'મતદારનું પૂરું નામ *',
+                          hintText: 'દા.ત. રાણવા હરસુખભાઈ મુળજીભાઈ',
+                          prefixIcon: const Icon(Icons.person_outline),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        ),
+                        validator: (val) {
+                          if (val == null || val.trim().isEmpty) {
+                            return 'કૃપા કરીને પૂરું નામ દાખલ કરો';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
+                      // ૧૨-અંકનો આધાર કાર્ડ નંબર
+                      TextFormField(
+                        controller: aadhaarCtrl,
+                        keyboardType: TextInputType.number,
+                        maxLength: 12,
+                        decoration: InputDecoration(
+                          labelText: '૧૨-અંકનો આધાર નંબર *',
+                          hintText: 'દા.ત. 123456789012',
+                          counterText: '',
+                          prefixIcon: const Icon(Icons.credit_card),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        ),
+                        validator: (val) {
+                          final clean = (val ?? '').replaceAll(' ', '').trim();
+                          if (clean.length != 12 || int.tryParse(clean) == null) {
+                            return '૧૨ અંકનો સાચો આધાર નંબર દાખલ કરો';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
+                      // ઉંમર અને જાતિ
+                      Row(
+                        children: [
+                          Expanded(
+                            flex: 1,
+                            child: TextFormField(
+                              controller: ageCtrl,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                labelText: 'ઉંમર *',
+                                prefixIcon: const Icon(Icons.cake_outlined),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                              validator: (val) {
+                                final age = int.tryParse(val ?? '');
+                                if (age == null || age < 18) {
+                                  return '૧૮+ વર્ષ';
+                                }
+                                return null;
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedGender,
+                              decoration: InputDecoration(
+                                labelText: 'જાતિ',
+                                prefixIcon: const Icon(Icons.wc),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 'પુરુષ (Male)', child: Text('પુરુષ (Male)')),
+                                DropdownMenuItem(value: 'સ્ત્રી (Female)', child: Text('સ્ત્રી (Female)')),
+                                DropdownMenuItem(value: 'અન્ય (Other)', child: Text('અન્ય (Other)')),
+                              ],
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setModalState(() => selectedGender = val);
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // જિલ્લો અને વોર્ડ નંબર
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              initialValue: selectedDistrict,
+                              decoration: InputDecoration(
+                                labelText: 'જિલ્લો',
+                                prefixIcon: const Icon(Icons.location_city),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                              items: const [
+                                DropdownMenuItem(value: 'જૂનાગઢ', child: Text('જૂનાગઢ')),
+                              ],
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setModalState(() => selectedDistrict = val);
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<int>(
+                              initialValue: selectedWard,
+                              decoration: InputDecoration(
+                                labelText: 'વોર્ડ નં.',
+                                prefixIcon: const Icon(Icons.format_list_numbered),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                              ),
+                              items: List.generate(15, (index) => index + 1)
+                                  .map((w) => DropdownMenuItem(
+                                        value: w,
+                                        child: Text('વોર્ડ $w'),
+                                      ))
+                                  .toList(),
+                              onChanged: (val) {
+                                if (val != null) {
+                                  setModalState(() => selectedWard = val);
+                                }
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // બૂથ નંબર
+                      TextFormField(
+                        controller: boothCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: 'બૂથ નંબર',
+                          hintText: 'દા.ત. 102',
+                          prefixIcon: const Icon(Icons.how_to_vote_outlined),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+
+                      // સબમિટ બટન
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.indigo,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                        onPressed: isSubmitting
+                            ? null
+                            : () async {
+                                if (!formKey.currentState!.validate()) return;
+
+                                setModalState(() {
+                                  isSubmitting = true;
+                                  dialogError = null;
+                                });
+
+                                final rawAadhaar = aadhaarCtrl.text.replaceAll(' ', '').trim();
+                                final voterName = nameCtrl.text.trim();
+                                final voterAge = int.tryParse(ageCtrl.text.trim()) ?? 35;
+                                final voterBooth = int.tryParse(boothCtrl.text.trim()) ?? 102;
+                                final messenger = ScaffoldMessenger.of(context);
+                                final navigator = Navigator.of(ctx);
+
+                                try {
+                                  final uri = Uri.parse('$_apiBaseUrl/api/voter/register');
+                                  await http.post(
+                                    uri,
+                                    headers: {'Content-Type': 'application/json'},
+                                    body: jsonEncode({
+                                      'aadhaar_number': rawAadhaar,
+                                      'full_name': voterName,
+                                      'age': voterAge,
+                                      'gender': selectedGender,
+                                      'district': selectedDistrict,
+                                      'taluka': selectedDistrict,
+                                      'ward_no': selectedWard,
+                                      'booth_no': voterBooth,
+                                    }),
+                                  ).timeout(const Duration(seconds: 4));
+                                } catch (_) {}
+
+                                final masked = 'XXXX XXXX ${rawAadhaar.substring(8)}';
+                                final existingIdx = _localVoters.indexWhere(
+                                  (v) => (v['aadhaar_masked']?.toString() ?? '').endsWith(rawAadhaar.substring(8)),
+                                );
+
+                                final newVoterData = {
+                                  'id': existingIdx >= 0 ? _localVoters[existingIdx]['id'] : _localVoters.length + 1,
+                                  'aadhaar_masked': masked,
+                                  'full_name': voterName,
+                                  'age': voterAge,
+                                  'gender': selectedGender,
+                                  'district': selectedDistrict,
+                                  'taluka': selectedDistrict,
+                                  'ward_no': selectedWard,
+                                  'booth_no': voterBooth,
+                                  'has_voted': 0,
+                                  'voted_at': null,
+                                };
+
+                                if (existingIdx >= 0) {
+                                  _localVoters[existingIdx] = newVoterData;
+                                } else {
+                                  _localVoters.add(newVoterData);
+                                }
+                                _totalVotersCount = _localVoters.length;
+
+                                navigator.pop();
+
+                                messenger.showSnackBar(
+                                  SnackBar(
+                                    content: Text('✅ મતદાર "$voterName" ની સફળતાપૂર્વક નોંધણી થઈ ગઈ!'),
+                                    backgroundColor: Colors.green.shade800,
+                                    duration: const Duration(seconds: 3),
+                                  ),
+                                );
+
+                                _aadhaarController.text = rawAadhaar;
+                                await _verifyAadhaar(rawAadhaar);
+                              },
+                        icon: isSubmitting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                              )
+                            : const Icon(Icons.how_to_reg),
+                        label: Text(
+                          isSubmitting ? 'નોંધણી થઈ રહી છે...' : 'મતદાર તરીકે નોંધણી કરો',
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   void _resetFlow() {
     setState(() {
       _currentStep = 0;
@@ -575,6 +926,23 @@ class _VotingScreenState extends State<VotingScreen> with SingleTickerProviderSt
             ],
           ),
           const SizedBox(height: 16),
+
+          // નવો મતદાર નોંધણી બટન
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.indigo,
+              side: const BorderSide(color: Colors.indigo, width: 1.5),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            icon: const Icon(Icons.person_add_alt_1),
+            label: const Text(
+              '➕ નવો મતદાર ઉમેરો (New Voter Registration)',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            onPressed: _openNewVoterDialog,
+          ),
+          const SizedBox(height: 14),
 
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
