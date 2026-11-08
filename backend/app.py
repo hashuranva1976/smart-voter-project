@@ -385,6 +385,211 @@ def scan_poster():
         if os.path.exists(file_path):
             os.remove(file_path)
 
+# ==========================================
+# AADHAAR & BIOMETRIC E-VOTING SYSTEM
+# ==========================================
+import hashlib
+import uuid
+from datetime import datetime
+
+def hash_aadhaar(num):
+    clean = str(num).replace(" ", "").strip()
+    return hashlib.sha256(clean.encode()).hexdigest()
+
+@app.route("/api/voter/lookup", methods=["POST"])
+def lookup_voter():
+    data = request.get_json() or {}
+    aadhaar = data.get("aadhaar_number", "").replace(" ", "").strip()
+    if len(aadhaar) != 12 or not aadhaar.isdigit():
+        return jsonify({"status": "error", "message": "કૃપા કરીને માન્ય ૧૨-અંકનો આધાર કાર્ડ નંબર દાખલ કરો"}), 400
+
+    a_hash = hash_aadhaar(aadhaar)
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM voters WHERE aadhaar_hash = ?", (a_hash,))
+    voter = cursor.fetchone()
+
+    if not voter:
+        # Register automatically for demo testing
+        masked = f"XXXX XXXX {aadhaar[-4:]}"
+        name = data.get("full_name") or f"મતદાર (આધાર: ...{aadhaar[-4:]})"
+        district = data.get("district") or "જૂનાગઢ"
+        taluka = data.get("taluka") or "જૂનાગઢ"
+        ward = int(data.get("ward_no") or 15)
+        booth = int(data.get("booth_no") or 102)
+
+        cursor.execute("""
+            INSERT INTO voters (aadhaar_hash, aadhaar_masked, full_name, age, gender, district, taluka, ward_no, booth_no, has_voted)
+            VALUES (?, ?, ?, 35, 'પુરુષ (Male)', ?, ?, ?, ?, 0)
+        """, (a_hash, masked, name, district, taluka, ward, booth))
+        conn.commit()
+        cursor.execute("SELECT * FROM voters WHERE aadhaar_hash = ?", (a_hash,))
+        voter = cursor.fetchone()
+
+    v_dict = dict(voter)
+    conn.close()
+    return jsonify({"status": "success", "voter": v_dict}), 200
+
+@app.route("/api/voting/ballot", methods=["GET"])
+def get_ballot():
+    district = request.args.get("district", "જૂનાગઢ")
+    ward = request.args.get("ward_no", "15")
+
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT p.id, p.full_name, p.party_name, p.constituency, p.education, p.photo_url,
+               COALESCE(a.total_liabilities, 0) as liabilities,
+               COALESCE(a.movable_assets + a.immovable_assets, 0) as total_assets,
+               COALESCE(c.case_status, 'Clean Record') as case_status
+        FROM politicians p
+        LEFT JOIN assets_liabilities a ON p.id = a.politician_id
+        LEFT JOIN criminal_cases c ON p.id = c.politician_id
+        WHERE (p.ward_no = ? OR p.constituency LIKE ?) AND (p.district LIKE ? OR p.constituency LIKE ?)
+        GROUP BY p.id
+        ORDER BY p.id ASC
+    """, (ward, f"%વોર્ડ નં. {ward}%", f"%{district}%", f"%{district}%"))
+    candidates = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+
+    # NOTA candidate (None of the Above)
+    candidates.append({
+        "id": 9999,
+        "full_name": "NOTA (ઉપરોક્તમાંથી કોઈ નહીં)",
+        "party_name": "NOTA",
+        "constituency": f"વોર્ડ નં. {ward}, {district}",
+        "education": "-",
+        "photo_url": "",
+        "liabilities": 0,
+        "total_assets": 0,
+        "case_status": "Clean Record"
+    })
+
+    return jsonify({"status": "success", "district": district, "ward_no": ward, "candidates": candidates}), 200
+
+@app.route("/api/voting/cast-vote", methods=["POST"])
+def cast_vote():
+    data = request.get_json() or {}
+    aadhaar = data.get("aadhaar_number", "").replace(" ", "").strip()
+    candidate_id = data.get("candidate_id")
+
+    if not aadhaar or not candidate_id:
+        return jsonify({"status": "error", "message": "આધાર નંબર અને ઉમેદવાર ID જરૂરી છે"}), 400
+
+    a_hash = hash_aadhaar(aadhaar)
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Verify voter
+    cursor.execute("SELECT * FROM voters WHERE aadhaar_hash = ?", (a_hash,))
+    voter = cursor.fetchone()
+    if not voter:
+        conn.close()
+        return jsonify({"status": "error", "message": "મતદાર યાદીમાં આધાર કાર્ડ મળ્યું નથી"}), 404
+
+    if voter["has_voted"]:
+        voted_time = voter["voted_at"] or "અગાઉ"
+        conn.close()
+        return jsonify({
+            "status": "already_voted",
+            "message": f"આ આધાર કાર્ડ પરથી પહેલેથી જ મતદાન થઈ ચૂક્યું છે! (સમય: {voted_time})"
+        }), 403
+
+    # Candidate details
+    if int(candidate_id) == 9999:
+        cand_name = "NOTA (ઉપરોક્તમાંથી કોઈ નહીં)"
+        cand_party = "NOTA"
+    else:
+        cursor.execute("SELECT full_name, party_name FROM politicians WHERE id = ?", (candidate_id,))
+        cand_row = cursor.fetchone()
+        if not cand_row:
+            conn.close()
+            return jsonify({"status": "error", "message": "માન્ય ઉમેદવાર પસંદ કરો"}), 400
+        cand_name = cand_row["full_name"]
+        cand_party = cand_row["party_name"]
+
+    now_iso = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    vote_token = f"VOTE-{uuid.uuid4().hex[:12].upper()}"
+
+    # 1. Update voter status (Mark as Voted)
+    cursor.execute("""
+        UPDATE voters 
+        SET has_voted = 1, voted_at = ?
+        WHERE id = ?
+    """, (now_iso, voter["id"]))
+
+    # 2. Record anonymous vote in ballot box
+    cursor.execute("""
+        INSERT INTO ballot_votes (vote_token, district, ward_no, candidate_id, candidate_name, party_name, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (vote_token, voter["district"], voter["ward_no"], candidate_id, cand_name, cand_party, now_iso))
+
+    conn.commit()
+    conn.close()
+
+    return jsonify({
+        "status": "success",
+        "message": "તમારો મત સફળતાપૂર્વક નોંધાઈ ગયો છે!",
+        "receipt": {
+            "token": vote_token,
+            "candidate_name": cand_name,
+            "party_name": cand_party,
+            "ward_no": voter["ward_no"],
+            "district": voter["district"],
+            "booth_no": voter["booth_no"],
+            "timestamp": now_iso
+        }
+    }), 200
+
+@app.route("/api/voting/live-results", methods=["GET"])
+def live_voting_results():
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT count(*) FROM voters")
+    total_voters = cursor.fetchone()[0]
+
+    cursor.execute("SELECT count(*) FROM ballot_votes")
+    total_votes = cursor.fetchone()[0]
+
+    turnout = round((total_votes / total_voters * 100), 1) if total_voters > 0 else 0.0
+
+    cursor.execute("""
+        SELECT candidate_name, party_name, count(*) as vote_count
+        FROM ballot_votes
+        GROUP BY candidate_id
+        ORDER BY vote_count DESC
+    """)
+    candidate_summary = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("""
+        SELECT party_name, count(*) as vote_count
+        FROM ballot_votes
+        GROUP BY party_name
+        ORDER BY vote_count DESC
+    """)
+    party_summary = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+    return jsonify({
+        "status": "success",
+        "total_registered_voters": total_voters,
+        "total_votes_polled": total_votes,
+        "turnout_percentage": turnout,
+        "candidate_results": candidate_summary,
+        "party_results": party_summary
+    }), 200
+
+@app.route("/api/voting/reset", methods=["POST"])
+def reset_voting_demo():
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM ballot_votes")
+    cursor.execute("UPDATE voters SET has_voted = 0, voted_at = NULL")
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "success", "message": "ડેમો વોટિંગ રીસેટ થઈ ગયું છે"}), 200
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'models/scan_models.dart';
 import 'screens/scan_result_screen.dart';
 import 'screens/search_screen.dart';
+import 'screens/voting_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -58,6 +59,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             onOpenSearch: () => setState(() => _currentIndex = 1),
           ),
           SearchScreen(serverUrl: serverUrl),
+          VotingScreen(serverUrl: serverUrl),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -73,6 +75,11 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             icon: Icon(Icons.search_outlined),
             selectedIcon: Icon(Icons.search, color: Colors.indigo),
             label: 'નેતા / વોર્ડ શોધો',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.how_to_vote_outlined),
+            selectedIcon: Icon(Icons.how_to_vote, color: Colors.indigo),
+            label: 'મતદાન કેન્દ્ર',
           ),
         ],
       ),
