@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'leader_detail_screen.dart';
 import 'comparison_screen.dart';
@@ -32,6 +33,9 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
   String _error = '';
   bool _hasSearched = false;
 
+  // લોકલ ઑફલાઇન ડેટાસેટ (૧,૬૩૧ ઉમેદવારો/કોર્પોરેટરો)
+  List<Map<String, dynamic>> _localPoliticians = [];
+
   // સરખામણી માટે પસંદ કરેલા ઉમેદવારો
   final Set<int> _selectedForCompare = {};
   final Map<int, Map<String, dynamic>> _selectedDetails = {};
@@ -40,6 +44,21 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _loadLocalPoliticians();
+  }
+
+  Future<void> _loadLocalPoliticians() async {
+    try {
+      final jsonStr = await rootBundle.loadString('assets/data/politicians.json');
+      final List<dynamic> list = jsonDecode(jsonStr);
+      if (mounted) {
+        setState(() {
+          _localPoliticians = list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading local politicians: $e');
+    }
   }
 
   @override
@@ -57,6 +76,168 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
   String get _apiBaseUrl {
     var url = widget.serverUrl.replaceAll(RegExp(r'/api/scan-poster/?$'), '');
     return url.replaceAll(RegExp(r'/+$'), '');
+  }
+
+  String _normalize(dynamic val) {
+    if (val == null) return '';
+    var s = val.toString().toLowerCase().trim();
+    const gujNums = ['૦', '૧', '૨', '૩', '૪', '૫', '૬', '૭', '૮', '૯'];
+    for (int i = 0; i < gujNums.length; i++) {
+      s = s.replaceAll(gujNums[i], i.toString());
+    }
+    s = s.replaceAll('જુનાગઢ', 'જૂનાગઢ');
+    s = s.replaceAll('વોડ', 'વોર્ડ');
+    return s.trim();
+  }
+
+  List<Map<String, dynamic>> _searchLocally(Map<String, String> queryParams) {
+    if (_localPoliticians.isEmpty) return [];
+
+    final q = _normalize(queryParams['q'] ?? '');
+    final name = _normalize(queryParams['name'] ?? '');
+    final district = _normalize(queryParams['district'] ?? '');
+    final village = _normalize(queryParams['village'] ?? '');
+    final city = _normalize(queryParams['city'] ?? '');
+    final ward = _normalize(queryParams['ward'] ?? '');
+    final party = _normalize(queryParams['party'] ?? '');
+
+    // ૧. જો સિંગલ બાર સર્ચ `q` હોય
+    if (q.isNotEmpty) {
+      const noise = {
+        'વોર્ડ', 'વોડ', 'નંબર', 'નં', 'જિલ્લો', 'જિલ્લા', 'ગામ', 'તાલુકો', 
+        'તાલુકા', 'શહેર', 'મનપા', 'કોર્પોરેટર', 'નેતા', 'district', 'ward', 'city'
+      };
+      final rawTokens = q.split(RegExp(r'\s+')).where((t) => t.isNotEmpty).toList();
+      final tokens = rawTokens.where((t) => !noise.contains(t)).toList();
+      final searchTokens = tokens.isEmpty ? rawTokens : tokens;
+
+      List<Map<String, dynamic>> matches = [];
+      for (final p in _localPoliticians) {
+        final pName = _normalize(p['full_name']);
+        final pParty = _normalize(p['party_name']);
+        final pConst = _normalize(p['constituency']);
+        final pDist = _normalize(p['district']);
+        final pVil = _normalize(p['village']);
+        final pTal = _normalize(p['taluka']);
+        final pWard = (p['ward_no'] ?? '').toString();
+
+        var haystack = '$pName $pParty $pConst $pDist $pVil $pTal ward $pWard વોર્ડ $pWard';
+        if (pParty.contains('inc') || pParty.contains('કોંગ્રેસ')) {
+          haystack += ' કોંગ્રેસ inc congress કોગ્રેસ';
+        }
+        if (pParty.contains('bjp') || pParty.contains('ભાજપ')) {
+          haystack += ' ભાજપ ભાજપા bjp';
+        }
+        if (pParty.contains('aap') || pParty.contains('આપ')) {
+          haystack += ' આપ aap aam aadmi';
+        }
+        if (pParty.contains('ind') || pParty.contains('અપક્ષ')) {
+          haystack += ' અપક્ષ ind independent';
+        }
+
+        int score = 0;
+        for (final tok in searchTokens) {
+          if (haystack.contains(tok)) score++;
+        }
+
+        if (score == searchTokens.length) {
+          matches.add(p);
+        }
+      }
+
+      // જો પૂર્ણ મેચ ન મળે તો ૬૦% થી વધુ શબ્દો મેચ થાય તેવા પરિણામો
+      if (matches.isEmpty && searchTokens.length > 1) {
+        for (final p in _localPoliticians) {
+          final pName = _normalize(p['full_name']);
+          final pParty = _normalize(p['party_name']);
+          final pConst = _normalize(p['constituency']);
+          final haystack = '$pName $pParty $pConst';
+          int score = 0;
+          for (final tok in searchTokens) {
+            if (haystack.contains(tok)) score++;
+          }
+          if (score >= (searchTokens.length * 0.6).ceil()) {
+            matches.add(p);
+          }
+        }
+      }
+      return matches;
+    }
+
+    // ૨. અલગ-અલગ ખાનાઓ દ્વારા સર્ચ
+    List<Map<String, dynamic>> matches = [];
+    for (final p in _localPoliticians) {
+      final pName = _normalize(p['full_name']);
+      final pParty = _normalize(p['party_name']);
+      final pConst = _normalize(p['constituency']);
+      final pDist = _normalize(p['district']);
+      final pVil = _normalize(p['village']);
+      final pTal = _normalize(p['taluka']);
+      final pWard = (p['ward_no'] ?? '').toString();
+
+      // નામ ચેક
+      if (name.isNotEmpty) {
+        final nameParts = name.split(RegExp(r'\s+')).where((t) => t.isNotEmpty);
+        bool matchedAnyName = false;
+        for (final part in nameParts) {
+          if (pName.contains(part)) {
+            matchedAnyName = true;
+            break;
+          }
+        }
+        if (!matchedAnyName) continue;
+      }
+
+      // જિલ્લો ચેક
+      if (district.isNotEmpty) {
+        if (!pDist.contains(district) && !pConst.contains(district)) continue;
+      }
+
+      // ગામ / તાલુકો ચેક
+      if (village.isNotEmpty) {
+        if (!pVil.contains(village) && !pTal.contains(village) && !pConst.contains(village)) continue;
+      }
+
+      // શહેર / મનપા ચેક
+      if (city.isNotEmpty) {
+        if (!pVil.contains(city) && !pConst.contains(city) && !pDist.contains(city)) continue;
+      }
+
+      // વોર્ડ નંબર ચેક
+      if (ward.isNotEmpty) {
+        if (pWard != ward &&
+            !pConst.contains('વોર્ડ નં. $ward') &&
+            !pConst.contains('વોર્ડ $ward') &&
+            !pConst.contains('ward $ward')) {
+          continue;
+        }
+      }
+
+      // પક્ષ ચેક
+      if (party.isNotEmpty && party != 'તમામ') {
+        bool partyMatch = false;
+        if ((party.contains('કોંગ્રેસ') || party.contains('inc')) &&
+            (pParty.contains('inc') || pParty.contains('કોંગ્રેસ'))) {
+          partyMatch = true;
+        } else if ((party.contains('ભાજપ') || party.contains('bjp')) &&
+            (pParty.contains('bjp') || pParty.contains('ભાજપ'))) {
+          partyMatch = true;
+        } else if ((party.contains('આપ') || party.contains('aap')) &&
+            (pParty.contains('aap') || pParty.contains('આપ'))) {
+          partyMatch = true;
+        } else if ((party.contains('અપક્ષ') || party.contains('ind')) &&
+            (pParty.contains('ind') || pParty.contains('અપક્ષ'))) {
+          partyMatch = true;
+        } else if (pParty.contains(party)) {
+          partyMatch = true;
+        }
+        if (!partyMatch) continue;
+      }
+
+      matches.add(p);
+    }
+
+    return matches;
   }
 
   Future<void> _searchByFields() async {
@@ -104,28 +285,40 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
       _results = [];
     });
 
+    // ૧. પ્રથમ સ્થાનિક ડેટાસેટમાં તરત જ સર્ચ કરો (Instant Local Search)
+    final localMatches = _searchLocally(queryParams);
+    if (localMatches.isNotEmpty) {
+      setState(() {
+        _results = localMatches;
+        _loading = false;
+      });
+    }
+
+    // ૨. સાથે-સાથે ક્લાઉડ સર્વર પરથી અપડેટ ચકાસો (Online Cloud Fallback)
     try {
       final uri = Uri.parse('$_apiBaseUrl/api/search').replace(queryParameters: queryParams);
-      final res = await http.get(uri).timeout(const Duration(seconds: 15));
+      final res = await http.get(uri).timeout(const Duration(seconds: 4));
 
-      if (!mounted) return;
-
-      if (res.statusCode == 200) {
+      if (mounted && res.statusCode == 200) {
         final data = jsonDecode(res.body);
+        final remoteResults = data['results'] as List<dynamic>? ?? [];
+        if (remoteResults.isNotEmpty) {
+          setState(() {
+            _results = remoteResults;
+          });
+        }
+      }
+    } catch (_) {
+      // સર્વર ધીમું હોય કે ઑફલાઇન હોય તો લોકલ પરિણામો સુરક્ષિત રહે છે
+    } finally {
+      if (mounted) {
         setState(() {
-          _results = data['results'] ?? [];
+          _loading = false;
           if (_results.isEmpty) {
             _error = 'કોઈ પરિણામ મળ્યા નથી. કૃપા કરીને નામ, ગામ, વોર્ડ કે જિલ્લો તપાસીને ફરી પ્રયાસ કરો.';
           }
         });
-      } else {
-        setState(() => _error = 'સર્વર ભૂલ (કોડ: ${res.statusCode}). કૃપા કરીને ફરી પ્રયાસ કરો.');
       }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = 'કનેક્શન નિષ્ફળ: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -144,7 +337,67 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
     });
   }
 
+  Map<String, dynamic>? _buildReportCardFromLocal(int id) {
+    final p = _localPoliticians.firstWhere(
+      (item) => (item['id'] as num?)?.toInt() == id,
+      orElse: () => {},
+    );
+    if (p.isEmpty) return null;
+
+    final pId = (p['id'] as num).toInt();
+    return {
+      'id': pId,
+      'full_name': p['full_name'] ?? '',
+      'party_name': p['party_name'] ?? '',
+      'constituency': p['constituency'] ?? '',
+      'education': p['education'] ?? 'Graduate',
+      'photo_url': p['photo_url'] ?? '',
+      'district': p['district'] ?? '',
+      'taluka': p['taluka'] ?? '',
+      'village': p['village'] ?? '',
+      'ward_no': p['ward_no'] ?? 0,
+      'assets': [
+        {
+          'id': pId,
+          'politician_id': pId,
+          'financial_year': 2021,
+          'movable_assets': (p['movable_assets'] as num?)?.toDouble() ?? 0.0,
+          'immovable_assets': (p['immovable_assets'] as num?)?.toDouble() ?? 0.0,
+          'total_liabilities': (p['liabilities'] as num?)?.toDouble() ?? 0.0,
+        }
+      ],
+      'criminal_cases': [
+        {
+          'id': pId,
+          'politician_id': pId,
+          'case_status': p['case_status'] ?? 'Clean Record',
+          'case_details': p['case_details'] ?? 'Declared cases: 0',
+        }
+      ],
+      'performance': {
+        'id': pId,
+        'politician_id': pId,
+        'attendance_percentage': (p['attendance_percentage'] as num?)?.toDouble() ?? 0.0,
+        'debates_participated': (p['debates_participated'] as num?)?.toInt() ?? 0,
+        'questions_asked': (p['questions_asked'] as num?)?.toInt() ?? 0,
+      }
+    };
+  }
+
   Future<void> _openCandidateDetail(int politicianId) async {
+    // પ્રથમ લોકલ ડેટામાંથી તરત પ્રોફાઇલ ઓપન કરો
+    final localReport = _buildReportCardFromLocal(politicianId);
+    if (localReport != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => LeaderDetailScreen(reportCard: localReport),
+        ),
+      );
+      return;
+    }
+
+    // જો લોકલ ન મળે તો સર્વર પરથી લાવો
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -183,7 +436,7 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
   }
 
   Future<void> _toggleCompareSelection(Map<String, dynamic> candidate) async {
-    final id = candidate['id'] as int;
+    final id = (candidate['id'] as num).toInt();
 
     if (_selectedForCompare.contains(id)) {
       setState(() {
@@ -200,6 +453,17 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
       return;
     }
 
+    // લોકલ ડેટામાંથી રિપોર્ટ લો
+    final localReport = _buildReportCardFromLocal(id);
+    if (localReport != null) {
+      setState(() {
+        _selectedForCompare.add(id);
+        _selectedDetails[id] = localReport;
+      });
+      return;
+    }
+
+    // સર્વર પરથી લાવો
     try {
       final uri = Uri.parse('$_apiBaseUrl/api/politician/$id');
       final res = await http.get(uri).timeout(const Duration(seconds: 15));
@@ -299,7 +563,7 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
                               controller: _districtController,
                               decoration: const InputDecoration(
                                 labelText: '🏛️ જિલ્લો',
-                                hintText: 'દા.ત. જૂનાગઢ',
+                                hintText: 'દા.ત. જુનાગઢ',
                                 isDense: true,
                                 filled: true,
                                 fillColor: Colors.white,
@@ -313,7 +577,7 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
                               controller: _villageController,
                               decoration: const InputDecoration(
                                 labelText: '📍 ગામ / તાલુકો',
-                                hintText: 'દા.ત. જૂનાગઢ',
+                                hintText: 'દા.ત. જુનાગઢ',
                                 isDense: true,
                                 filled: true,
                                 fillColor: Colors.white,
@@ -334,7 +598,7 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
                               controller: _cityController,
                               decoration: const InputDecoration(
                                 labelText: '🏙️ શહેર / મનપા',
-                                hintText: 'દા.ત. જૂનાગઢ મનપા',
+                                hintText: 'દા.ત. જુનાગઢ મનપા',
                                 isDense: true,
                                 filled: true,
                                 fillColor: Colors.white,
@@ -448,24 +712,27 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
                         runSpacing: 4,
                         children: [
                           ActionChip(
-                            label: const Text('📍 જૂનાગઢ વોર્ડ ૧૫ (રણજીત પરમાર)', style: TextStyle(fontSize: 12)),
+                            avatar: const Icon(Icons.location_on, size: 16, color: Colors.red),
+                            label: const Text('જૂનાગઢ વોર્ડ ૧૫ (રણજીત પરમાર)'),
                             onPressed: () {
                               _singleSearchController.text = 'જૂનાગઢ વોર્ડ 15 રણજીત કોંગ્રેસ';
                               _searchBySingleBar('જૂનાગઢ વોર્ડ 15 રણજીત કોંગ્રેસ');
                             },
                           ),
                           ActionChip(
-                            label: const Text('📍 ગાંધીનગર વોર્ડ ૧ (શિલ્પાબેન)', style: TextStyle(fontSize: 12)),
+                            avatar: const Icon(Icons.location_on, size: 16, color: Colors.red),
+                            label: const Text('ગાંધીનગર વોર્ડ ૧ (શિલ્પાબેન)'),
                             onPressed: () {
-                              _singleSearchController.text = 'ગાંધીનગર 1 શિલ્પાબેન';
-                              _searchBySingleBar('ગાંધીનગર 1 શિલ્પાબેન');
+                              _singleSearchController.text = 'ગાંધીનગર વોર્ડ 1 શિલ્પાબેન';
+                              _searchBySingleBar('ગાંધીનગર વોર્ડ 1 શિલ્પાબેન');
                             },
                           ),
                           ActionChip(
-                            label: const Text('📍 ગોતા વોર્ડ ૧ (અમદાવાદ)', style: TextStyle(fontSize: 12)),
+                            avatar: const Icon(Icons.location_on, size: 16, color: Colors.red),
+                            label: const Text('ગોતા વોર્ડ ૧ (અમદાવાદ)'),
                             onPressed: () {
-                              _singleSearchController.text = 'ગોતા વોર્ડ 1';
-                              _searchBySingleBar('ગોતા વોર્ડ 1');
+                              _singleSearchController.text = 'ગોતા વોર્ડ 1 અમદાવાદ';
+                              _searchBySingleBar('ગોતા વોર્ડ 1 અમદાવાદ');
                             },
                           ),
                         ],
@@ -477,21 +744,10 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
             ),
           ),
 
-          const Divider(height: 1, thickness: 1),
-
-          // નીચે પરિણામોની યાદી
+          // નીચે પરિણામોની સૂચિ (Results List)
           Expanded(
             child: _loading
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 12),
-                        Text('ડેટાબેઝમાંથી શોધી રહ્યા છીએ...'),
-                      ],
-                    ),
-                  )
+                ? const Center(child: CircularProgressIndicator())
                 : _error.isNotEmpty
                     ? Center(
                         child: Padding(
@@ -532,7 +788,7 @@ class _SearchScreenState extends State<SearchScreen> with SingleTickerProviderSt
                             separatorBuilder: (_, __) => const SizedBox(height: 8),
                             itemBuilder: (ctx, index) {
                               final item = _results[index] as Map<String, dynamic>;
-                              final id = item['id'] as int;
+                              final id = (item['id'] as num).toInt();
                               final name = item['full_name']?.toString() ?? '-';
                               final party = item['party_name']?.toString() ?? '-';
                               final constituency = item['constituency']?.toString() ?? '-';
